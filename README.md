@@ -18,5 +18,6 @@ Thus the procedure involves 1) FFT of $\rho$ to momentum sapce; 2) finding $A(k)
 $$ U(x) = \exp (i t^a A^a(x)), $$ where $U$ is 3 by 3 matrix; $t^a$ are Gell-Mann matrices.    
 We use the package https://juliahub.com/ui/Packages/GellMannMatrices/GVbjE/0.1.1 . 
 * We repeat the procedure $N_y$ times and (matrix) multiply all $U$ together $U = U_1 U_2 U_3 ...$.   
+* The resulting $U(x)$ serves as the initial condition for JIMWLK evolution
 
 
