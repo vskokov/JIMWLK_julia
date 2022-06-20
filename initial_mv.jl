@@ -1,3 +1,4 @@
+cd(@__DIR__)
 using Distributions
 using StaticArrays
 using Random
@@ -7,15 +8,16 @@ using JLD2
 using GellMannMatrices
 using LinearAlgebra
 using FFTW
+using Printf
+using Plots
 
-
-const mu² = 1
+const mu² = 1.0
 
 l = 32
 N = 512
 a = l/N
 const Ny = 10
-const m² = 0.02
+const m² = 0.2
 const Nc=3
 
 const variance_of_mv_noise = sqrt(mu² / (Ny * a^2))
@@ -30,18 +32,19 @@ t[9]=t[9]*sqrt(2/3)
 
 function generate_rho_fft_to_momentum_space()
     rho = variance_of_mv_noise * randn(rng, Float32,(N,N))
-    a^2*fft(rho)
+    fft(rho)
 end
 
 function compute_field!(rhok)
 # Modifies the argument to return the field
     Threads.@threads for i in 1:N
         for j in 1:N
-            rhok[i,j] = rhok[i,j] / (a^2 * m² + 4.0 * sin(π*(i-1)/N)^2 + 4.0 * sin(π*(j-1)/N)^2)
+            rhok[i,j] = a^2*rhok[i,j] / (a^2 * m² + 4.0 * sin(π*(i-1)/N)^2 + 4.0 * sin(π*(j-1)/N)^2)
             # factor of a^2 was removed to account for the normalization of ifft next
             # ifft computes sum / (lenfth of array) for each dimension
         end
     end
+    #rhok[1,1] = 0.0im
     ifft!(rhok)
 end
 
@@ -65,7 +68,7 @@ function compute_local_fund_Wilson_line()
 
         Threads.@threads for i in 1:N
             for j in 1:N
-                A_arr[i,j] .= A_arr[i,j] + A[i,j].*t[b]
+                A_arr[i,j] = A_arr[i,j] + A[i,j]*t[b]
             end
         end
     end
@@ -148,7 +151,7 @@ function dipole(Vk)
             Sk[i,j] = 0.5*sum(Vk[b,i,j]*conj(Vk[b,i,j]) for b in 1:Nc^2)/Nc
         end
     end
-    ifft(Sk)./a^2/l^2 # accounts for impact parameter integral
+    return(ifft(Sk)./a^2/l^2) # accounts for impact parameter integral
 end
 
 function k2(i,j)
@@ -160,35 +163,41 @@ function bin_x(S)
     Nbins=N
     Sb=zeros(Float32,Nbins)
     Nb=zeros(Float32,Nbins)
-    for i in 1:N
-        for j in 1:N
+    for i in 1:N÷2
+        for j in 1:N÷2
             r=(i-1)*a+(j-1)*a
-            idx_r = floor(Int,r / (2*a))+1
-            if(idx_r<=Nbins)
+            idx_r = floor(Int,r / (a))+1
+            if (idx_r<=Nbins)
                 Sb[idx_r]=Sb[idx_r]+real(S[i,j])
                 Nb[idx_r]=Nb[idx_r]+1
             end
         end
     end
-
     return(Sb ./ Nb)
+end
+
+
+Sb=zeros(N)
+
+#open("out.dat","w") do io
+    for event in 1:2
+
+        V=compute_path_ordered_fund_Wilson_line()
+        test(V)
+
+        Vc=compute_field_of_V_components(V)
+        sum(Vc[:,1,1].*conj.(Vc[:,1,1]))
+        Vk=FFT_Wilson_components(Vc)
+        S=dipole(Vk)
+        S[1,1]
+        Sb .= Sb .+ bin_x(S)
+
+        #for kx in 1:N
+        #    Printf.@printf(io, " %f", Sb[kx])
+        #end
+        #Printf.@printf(io, "\n")
     end
-
-
-V=compute_path_ordered_fund_Wilson_line()
-test(V)
-
-
-Vc=compute_field_of_V_components(V)
-
-sum(Vc[:,1,1].*conj.(Vc[:,1,1]))
-
-Vk=FFT_Wilson_components(Vc)
-
-S=dipole(Vk)
-
-S[1,1]
-
-bin_x(S)
-
-plot((1:N)*2a,bin_x(S))
+#end
+x=collect(1:N)*a
+plot(x,Sb/2)
+plot!(x,exp.(-x.^2/60 .*log.(exp(1.0) .+   200.0./x)))
