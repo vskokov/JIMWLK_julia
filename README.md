@@ -22,6 +22,8 @@ We use the package https://juliahub.com/ui/Packages/GellMannMatrices/GVbjE/0.1.1
 
 
 ## Evolution for fixed coupling
-$$  V_{Y+\Delta Y}(x) = \exp \Bigg( - i   \frac{\sqrt{\alpha \Delta Y}}{\pi} \int_z  K_i (x-z) \cdot (V(z) {\xi_i}(z) V^\dagger(z))  \Bigg) V(x) \exp \Bigg(  i   \frac{\sqrt{\alpha \Delta Y}}{\pi} \int_z K_i (x-z) \cdot  \xi_i(z)\Bigg),$$
-where $\xi_i(x) = t^a \xi_i^a(x)$ and $\xi_i^a(x)$ is a random Gaussian noise with unit variance: 
+
+$$  V_{Y+\Delta Y}(x) = \exp \Bigg( - i   \frac{\sqrt{\alpha \Delta Y}}{\pi} \int_z  K_i (x-z) \cdot (V(z) {\xi_i}(z) V^\dagger(z))  \Bigg) V(x) \exp \Bigg(  i   \frac{\sqrt{\alpha \Delta Y}}{\pi} \int_z K_i (x-z) \cdot  \xi_i(z)\Bigg), $$
+where $\xi_i(x) = t^a \xi_i^a(x)$  and  $\xi_i^a(x)$ is a random Gaussian noise with unit variance: 
+
 $$ \langle \xi^a_i (x)  \xi^b_j (x') \rangle = \frac{1}{a^2} \delta_{ij}\delta_{ab}  \delta_{i_x, i_y} \,. $$
