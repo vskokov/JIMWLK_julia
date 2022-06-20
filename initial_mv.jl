@@ -26,7 +26,7 @@ seed=abs(rand(Int))
 rng = MersenneTwister(seed);
 
 
-const t=gellmann(Nc,skip_identity=false)/2
+t=gellmann(Nc,skip_identity=false)/2
 t[9]=t[9]*sqrt(2/3)
 
 
@@ -50,8 +50,8 @@ end
 
 
 function compute_local_fund_Wilson_line()
-    A_arr = Array{Matrix{ComplexF64}}(undef, (N,N))
-    V = Array{Matrix{ComplexF64}}(undef, (N,N))
+    A_arr = Array{Matrix{ComplexF32}}(undef, (N,N))
+    V = Array{Matrix{ComplexF32}}(undef, (N,N))
 
     Threads.@threads for i in 1:N
         for j in 1:N
@@ -106,7 +106,7 @@ end
 
 
 function compute_field_of_V_components(V)
-    Vc=zeros(ComplexF64, (Nc^2,N,N))
+    Vc=zeros(ComplexF32, (Nc^2,N,N))
 
     Threads.@threads for b in 1:Nc^2
         for i in 1:N
@@ -119,7 +119,7 @@ function compute_field_of_V_components(V)
 end
 
 function FFT_Wilson_components(Vc)
-    Vk=zeros(ComplexF64, (Nc^2,N,N))
+    Vk=zeros(ComplexF32, (Nc^2,N,N))
 
     Threads.@threads for b in 1:Nc^2
         @inbounds Vk[b,:,:] .= a^2 .* fft(Vc[b,:,:])
@@ -145,7 +145,7 @@ function test(V)
 end
 
 function dipole(Vk)
-    Sk = zeros(ComplexF64, (N,N))
+    Sk = zeros(ComplexF32, (N,N))
     Threads.@threads for i in 1:N
         for j in 1:N
             Sk[i,j] = 0.5*sum(Vk[b,i,j]*conj(Vk[b,i,j]) for b in 1:Nc^2)/Nc
@@ -177,6 +177,39 @@ function bin_x(S)
 end
 
 
+function K_x(x,y)
+    r2 = (sin(x*π/N)^2 + sin(y*π/N)^2)*(l/π)^2
+    x = sin(x*2π/N)*l/(2π)
+    return x/(r2+1e-16)
+end
+
+
+function WW_kernel!(i,K_of_k)
+    x = collect(0:N-1)
+    y = copy(x)
+    K = map(Base.splat(K_x), Iterators.product(x, y))
+
+    K_of_k .= fft(K)
+    if (i==2)
+        K_of_k = transpose(K_of_k)
+    end
+end
+
+
+V=compute_path_ordered_fund_Wilson_line()
+
+
+
+
+
+
+
+
+
+
+
+
+##
 Sb=zeros(N÷2)
 
 #open("out.dat","w") do io
