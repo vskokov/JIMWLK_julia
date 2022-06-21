@@ -2,15 +2,10 @@ cd(@__DIR__)
 using Distributions
 using StaticArrays
 using Random
-using DelimitedFiles
-using SLEEF
-using JLD2
 using GellMannMatrices
 using LinearAlgebra
 using FFTW
 using Printf
-using Plots
-using LaTeXStrings
 
 const mu² = 1.0
 
@@ -25,13 +20,14 @@ const alpha_fc = 1 # Y is measured in alpha_fc
 
 const variance_of_mv_noise = sqrt(mu² / (Ny * a^2))
 
+
+ID=ARGS[1]
+
 seed=abs(rand(Int))
 rng = MersenneTwister(seed);
 
-
 t=gellmann(Nc,skip_identity=false)/2
 t[9]=t[9]*sqrt(2/3)
-
 
 function generate_rho_fft_to_momentum_space()
     rho = variance_of_mv_noise * randn(rng, Float32,(N,N))
@@ -311,7 +307,7 @@ function JIMWLK_evolution(V,Y_f,ΔY)
     WW_kernel!(2,K_of_k_2)
 
     Y=0.0
-    open("test.dat","w") do io
+    open("output_$ID.dat","w") do io
         while Y<Y_f
             observables(io, Y,V)
 
@@ -336,45 +332,10 @@ function JIMWLK_evolution(V,Y_f,ΔY)
 
 end
 
-function Qs_fit_cpp(Y)
 
-    a = 0.77190536
-    b = 0.27141908
-    c = -0.06149744
-
-	return (a*exp.(b*Y).+c);
-end
 
 V=compute_path_ordered_fund_Wilson_line()
 
 Vc=compute_field_of_V_components(V)
-sum(Vc[:,1,1].*conj.(Vc[:,1,1]))
-Vk=FFT_Wilson_components(Vc)
-S=dipole(Vk)
-(r,Sb) = bin_x(S)
-plot(r,Sb)
-
-Qs_of_S(r,Sb)
-
-
 
 JIMWLK_evolution(V,1.0,0.001)
-
-Vc=compute_field_of_V_components(V)
-sum(Vc[:,1,1].*conj.(Vc[:,1,1]))
-Vk=FFT_Wilson_components(Vc)
-S=dipole(Vk)
-(r,Sb) = bin_x(S)
-plot!(r,Sb)
-
-Qs_data=readdlm("test.dat")
-
-
-Qs_data_cpp=readdlm("/Users/vskokov/Dropbox/Projects/2022/MV_Jack_X_check_Julia_x_check/Qs.dat")
-
-plot(Qs_data[:,1],Qs_data[:,2]/Qs_data[1,2],label="")
-
-plot!(Qs_data_cpp[:,1],Qs_data_cpp[:,2]/Qs_data_cpp[1,2],label="")
-
-savefig()
-##
