@@ -14,8 +14,9 @@ using Plots
 const mu² = 1.0
 
 const l = 32
-const N = 512
+const N = 128
 const a = l/N
+const a2=a^2
 const Ny = 10
 const m² = 0.2^2
 const Nc=3
@@ -51,12 +52,11 @@ end
 
 function compute_local_fund_Wilson_line()
     A_arr = Array{Matrix{ComplexF32}}(undef, (N,N))
-    V = Array{Matrix{ComplexF32}}(undef, (N,N))
+    V = zeros(ComplexF32, (N,N,Nc,Nc))
 
     Threads.@threads for i in 1:N
         for j in 1:N
             @inbounds A_arr[i,j] = zeros(ComplexF32,(Nc,Nc))
-            @inbounds V[i,j] = zeros(ComplexF32,(Nc,Nc))
         end
     end
 
@@ -75,7 +75,8 @@ function compute_local_fund_Wilson_line()
 
     Threads.@threads for i in 1:N
         for j in 1:N
-            @inbounds V[i,j] .= exp(1.0im.*A_arr[i,j])
+            V_ij=@view V[i,j,:,:]
+            @inbounds V_ij .= exp(1.0im.*A_arr[i,j])
         end
     end
     return V
@@ -89,7 +90,9 @@ function compute_path_ordered_fund_Wilson_line()
         tmp=compute_local_fund_Wilson_line()
         Threads.@threads for i in 1:N
             for j in 1:N
-                @inbounds V[i,j] = V[i,j]*tmp[i,j]
+                V_ij= @view V[i,j,:,:]
+                tmp_ij= @view tmp[i,j,:,:]
+                @inbounds V_ij .= V_ij*tmp_ij
             end
         end
     end
@@ -111,7 +114,8 @@ function compute_field_of_V_components(V)
     Threads.@threads for b in 1:Nc^2
         for i in 1:N
             for j in 1:N
-                @inbounds Vc[b,i,j]=2.0*tr(V[i,j]*t[b])
+                V_ij=@view V[i,j,:,:]
+                @inbounds Vc[b,i,j]=2.0*tr(V_ij*t[b])
             end
         end
     end
@@ -135,13 +139,13 @@ function test(V)
     display(tr(t[1] * t[1])==0.5)
     display(tr(t[9] * t[9])==0.5)
 
-    testV=V_components(V[1,1])
+    testV=V_components(V[1,1,:,:])
 
-    testM=sum(testV[b]*t[b] for b in 1:Nc^2) .- V[1,1]
+    testM=sum(testV[b]*t[b] for b in 1:Nc^2) .- V[1,1,:,:]
 
     display(testM)
 
-    display(V[1,1]*adjoint(V[1,1]))
+    display(V[1,1,:,:]*adjoint(V[1,1,:,:]))
 end
 
 function dipole(Vk)
@@ -176,36 +180,131 @@ function bin_x(S)
     return(Sb ./ (1e-16.+Nb))
 end
 
-
 function K_x(x,y)
     r2 = (sin(x*π/N)^2 + sin(y*π/N)^2)*(l/π)^2
     x = sin(x*2π/N)*l/(2π)
     return x/(r2+1e-16)
 end
 
-
 function WW_kernel!(i,K_of_k)
     x = collect(0:N-1)
     y = copy(x)
     K = map(Base.splat(K_x), Iterators.product(x, y))
 
-    K_of_k .= fft(K)
+    K_of_k .= a2*fft(K)
     if (i==2)
         K_of_k = transpose(K_of_k)
     end
 end
 
+function generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
+    randn!(rng, ξ_c)
+
+    for i in 1:N
+        for j in 1:N
+            ξ_1=@view ξ[1,i,j,:,:]
+            ξ_1 .= (ξ_c[1,i,j,b]*t[b] for b in 1:Nc^2-1)
+            ξ_2=@view ξ[2,i,j,:,:]
+            ξ_2 .= (ξ_c[2,i,j,b]*t[b] for b in 1:Nc^2-1)
+        end
+    end
+
+    ξ_k .= fft(ξ,(2,3))
+    ξ_k .= ξ_k*a # a^2/a ; 1/a is from the noise noise correlator
+end
+
+
+function convolution!(K, ξ_k, ξ_out)
+    sub_ξ_1 = @view ξ_k[1,:,:,:,:]
+    sub_K_1 = @view K[1,:,:]
+    sub_ξ_2 = @view ξ_k[2,:,:,:,:]
+    sub_K_2 = @view K[2,:,:]
+    ξ_out .= (sub_ξ_1 .* sub_K_1 .+ sub_ξ_2 .* sub_K_2)/a2
+    ifft!(ξ_out,(1,2))
+end
+
+
+function rotated_noise(ξ,ξ_R_k,V)
+    ξ_R_k .= 0.0im
+    for i in 1:N, j in 1:N
+        aV = adjoint(V[i,j])
+        for p in 1:2
+                    ξ_R = @view ξ_R_k[p,i,j,:,:]
+                    ξ_R .= aV*ξ[p,i,j,:,:]*V
+        end
+    end
+    fft!(ξ_R_k,(2,3))
+    ξ_R_k .= ξ_R_k*a
+end
+
+
+function exp_L(ξ_k, K, ξ_out, exp_out)
+    convolution!(K, ξ_k, ξ_out)
+    for i in 1:N
+        for j in 1:N
+            Exp = @view exp_out[i,j,:,:]
+            ξ_ij = @view ξ_out[i,j,:,:]
+            Exp .= exp(-1.0im*ξ_ij)
+        end
+    end
+end
+
+function exp_R(ξ_k, K, ξ_out, exp_out)
+    convolution!(K, ξ_k, ξ_out)
+    for i in 1:N
+        for j in 1:N
+            Exp = @view exp_out[i,j,:,:]
+            ξ_ij = @view ξ_out[i,j,:,:]
+            Exp .= exp(1.0im*ξ_ij)
+        end
+    end
+end
+
+function observables(Y,V)
+end
+
+function JIMWLK_evolution(V,Y_f,ΔY)
+    ξ_c = zeros(Float32, (2,N,N,Nc^2-1))
+    ξ=zeroes(ComplexF32, (2,N,N,Nc,Nc))
+    ξ_k=zeroes(ComplexF32, (2,N,N,Nc,Nc))
+    ξ_R_k=zeroes(ComplexF32, (2,N,N,Nc,Nc))
+    ξ_conv_with_K=zeroes(ComplexF32, (N,N,Nc,Nc))
+    exp_R=zeroes(ComplexF32, (N,N,Nc,Nc))
+    exp_L=zeroes(ComplexF32, (N,N,Nc,Nc))
+
+
+    K_of_k=zeroes(ComplexF32, (2,N,N))
+    K_of_k_1 = @view K_of_k[1,:,:]
+    K_of_k_2 = @view K_of_k[2,:,:]
+    WW_kernel!(1,K_of_k_1)
+    WW_kernel!(2,K_of_k_2)
+
+    Y=0.0
+
+    while Y<Y_f
+        observables(Y,V)
+
+        generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
+        exp_L(ξ_k, K_of_k, ξ_conv_with_K, exp_L)
+
+        rotated_noise(ξ,ξ_k,V)
+        exp_R(ξ_k, K_of_k, ξ_conv_with_K, exp_R)
+
+        for i in 1:N
+            for j in 1:N
+                V_ij = @view V[i,j,:,:]
+                exp_L_ij=@view exp_L[i,j,:,:]
+                exp_R_ij=@view exp_R[i,j,:,:]
+                V_ij .=   exp_L_ij*V_ij*exp_R_ij
+            end
+        end
+
+        Y=Y+ΔY
+    end
+
+end
 
 V=compute_path_ordered_fund_Wilson_line()
-
-
-
-
-
-
-
-
-
 
 
 
@@ -249,3 +348,8 @@ plot!(dataCpp[:,1],dataCpp[:,2])
 
 dataCpp=readdlm("/Users/vskokov/Dropbox/Projects/2022/MV_Jack_X_check_Julia_x_check/out4.dat",' ')
 plot!(dataCpp[:,1],dataCpp[:,2])
+
+
+Threads.@threads for i in 1:N, j in 1:N
+    i+j
+end
