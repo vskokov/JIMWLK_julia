@@ -165,19 +165,20 @@ end
 
 function bin_x(S)
     Nbins=N÷2
+    step=2a
     Sb=zeros(Float32,Nbins)
     Nb=zeros(Float32,Nbins)
     for i in 1:N÷2
         for j in 1:N÷2
             r=sqrt(((i-1)*a)^2+((j-1)*a)^2)
-            idx_r = floor(Int,r / (2*a))+1
+            idx_r = floor(Int,r / (step))+1
             if (idx_r<=Nbins)
                 Sb[idx_r]=Sb[idx_r]+real(S[i,j])
                 Nb[idx_r]=Nb[idx_r]+1
             end
         end
     end
-    return(Sb ./ (1e-16.+Nb))
+    return(collect(1:Nbins)*step,Sb ./ (1e-16.+Nb))
 end
 
 function K_x(x,y)
@@ -262,9 +263,9 @@ function exp_Right(ξ_k, K, ξ_out, exp_out)
 end
 
 function Qs_of_S(r,S)
-    j=0
+    j=2
     for i in 2:length(S)
-        if (S[i-1]-exp(-0.5))*(S[i]-exp(-0.5)))<0
+        if (S[i-1]-exp(-0.5))*(S[i]-exp(-0.5))<0
             j=i
             continue
         end
@@ -275,7 +276,16 @@ end
 
 
 function observables(Y,V)
-    display(Y)
+
+    Vc=compute_field_of_V_components(V)
+    Vk=FFT_Wilson_components(Vc)
+    S=dipole(Vk)
+    (r,Sb)=bin_x(S)
+
+    Qs=Qs_of_S(r,Sb)
+
+    display(Sb[1])
+    display((Y, Qs))
 end
 
 function JIMWLK_evolution(V,Y_f,ΔY)
@@ -352,6 +362,10 @@ Sb=zeros(N÷2)
 x=collect(1:N÷2)*a*2
 plot(x,Sb/10)
 #plot!(x,exp.(-x.^2/60 .*log.(exp(1.0) .+   200.0./x)))
+
+plot!(xlim=(0,4),ylim=(0.6,0.61))
+
+Qs_of_S(x,Sb/10)
 
 dataCpp=readdlm("/Users/vskokov/Dropbox/Projects/2022/MV_Jack_X_check_Julia_x_check/out.dat",' ')
 plot!(dataCpp[:,1],dataCpp[:,2])
