@@ -203,9 +203,9 @@ function generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
     for i in 1:N
         for j in 1:N
             ξ_1=@view ξ[1,i,j,:,:]
-            ξ_1 .= (ξ_c[1,i,j,b]*t[b] for b in 1:Nc^2-1)
+            ξ_1 .= sum(ξ_c[1,i,j,b]*t[b] for b in 1:Nc^2-1)
             ξ_2=@view ξ[2,i,j,:,:]
-            ξ_2 .= (ξ_c[2,i,j,b]*t[b] for b in 1:Nc^2-1)
+            ξ_2 .= sum(ξ_c[2,i,j,b]*t[b] for b in 1:Nc^2-1)
         end
     end
 
@@ -227,10 +227,11 @@ end
 function rotated_noise(ξ,ξ_R_k,V)
     ξ_R_k .= 0.0im
     for i in 1:N, j in 1:N
-        aV = adjoint(V[i,j])
+        V_ij = @view V[i,j,:,:]
+        aV = adjoint(V_ij)
         for p in 1:2
                     ξ_R = @view ξ_R_k[p,i,j,:,:]
-                    ξ_R .= aV*ξ[p,i,j,:,:]*V
+                    ξ_R .= aV*ξ[p,i,j,:,:]*V_ij
         end
     end
     fft!(ξ_R_k,(2,3))
@@ -238,7 +239,7 @@ function rotated_noise(ξ,ξ_R_k,V)
 end
 
 
-function exp_L(ξ_k, K, ξ_out, exp_out)
+function exp_Left(ξ_k, K, ξ_out, exp_out)
     convolution!(K, ξ_k, ξ_out)
     for i in 1:N
         for j in 1:N
@@ -249,7 +250,7 @@ function exp_L(ξ_k, K, ξ_out, exp_out)
     end
 end
 
-function exp_R(ξ_k, K, ξ_out, exp_out)
+function exp_Right(ξ_k, K, ξ_out, exp_out)
     convolution!(K, ξ_k, ξ_out)
     for i in 1:N
         for j in 1:N
@@ -260,20 +261,34 @@ function exp_R(ξ_k, K, ξ_out, exp_out)
     end
 end
 
+function Qs_of_S(r,S)
+    j=0
+    for i in 2:length(S)
+        if (S[i-1]-exp(-0.5))*(S[i]-exp(-0.5)))<0
+            j=i
+            continue
+        end
+    end
+    r = r[j] + (r[j-1]-r[j])/(S[j-1]-S[j])*(exp(-0.5)-S[j])
+    return sqrt(2.0)/r
+end
+
+
 function observables(Y,V)
+    display(Y)
 end
 
 function JIMWLK_evolution(V,Y_f,ΔY)
     ξ_c = zeros(Float32, (2,N,N,Nc^2-1))
-    ξ=zeroes(ComplexF32, (2,N,N,Nc,Nc))
-    ξ_k=zeroes(ComplexF32, (2,N,N,Nc,Nc))
-    ξ_R_k=zeroes(ComplexF32, (2,N,N,Nc,Nc))
-    ξ_conv_with_K=zeroes(ComplexF32, (N,N,Nc,Nc))
-    exp_R=zeroes(ComplexF32, (N,N,Nc,Nc))
-    exp_L=zeroes(ComplexF32, (N,N,Nc,Nc))
+    ξ=zeros(ComplexF32, (2,N,N,Nc,Nc))
+    ξ_k=zeros(ComplexF32, (2,N,N,Nc,Nc))
+    ξ_R_k=zeros(ComplexF32, (2,N,N,Nc,Nc))
+    ξ_conv_with_K=zeros(ComplexF32, (N,N,Nc,Nc))
+    exp_R=zeros(ComplexF32, (N,N,Nc,Nc))
+    exp_L=zeros(ComplexF32, (N,N,Nc,Nc))
 
 
-    K_of_k=zeroes(ComplexF32, (2,N,N))
+    K_of_k=zeros(ComplexF32, (2,N,N))
     K_of_k_1 = @view K_of_k[1,:,:]
     K_of_k_2 = @view K_of_k[2,:,:]
     WW_kernel!(1,K_of_k_1)
@@ -285,10 +300,10 @@ function JIMWLK_evolution(V,Y_f,ΔY)
         observables(Y,V)
 
         generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
-        exp_L(ξ_k, K_of_k, ξ_conv_with_K, exp_L)
+        exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L)
 
         rotated_noise(ξ,ξ_k,V)
-        exp_R(ξ_k, K_of_k, ξ_conv_with_K, exp_R)
+        exp_Right(ξ_k, K_of_k, ξ_conv_with_K, exp_R)
 
         for i in 1:N
             for j in 1:N
@@ -306,6 +321,10 @@ end
 
 V=compute_path_ordered_fund_Wilson_line()
 
+JIMWLK_evolution(V,1,0.01)
+
+
+##
 
 
 ##
