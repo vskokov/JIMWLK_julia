@@ -168,6 +168,10 @@ function k2_symm(i,j)
     return((sin(2π*(i-1)/N)^2 +  sin(2π*(j-1)/N)^2)/a^2)
 end
 
+function k2_symm(i,j)
+    return((sin(2π*(i-1)/N)^2 +  sin(2π*(j-1)/N)^2)/a^2)
+end
+
 
 function bin_x(S)
     Nbins=N÷2
