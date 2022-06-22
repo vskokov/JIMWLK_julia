@@ -15,7 +15,7 @@ using LaTeXStrings
 const mu² = Float32(1.0)
 
 const l = 32
-const N = 256
+const N = 32
 const a = Float32(l/N)
 const a2 = a^2
 const Ny = 50
@@ -168,9 +168,6 @@ function k2_symm(i,j)
     return((sin(2π*(i-1)/N)^2 +  sin(2π*(j-1)/N)^2)/a^2)
 end
 
-function k2_symm(i,j)
-    return((sin(2π*(i-1)/N)^2 +  sin(2π*(j-1)/N)^2)/a^2)
-end
 
 
 function bin_x(S)
@@ -407,46 +404,51 @@ end
 
 function Generate_noise_in_k_space!(ξ,ξ_k,ξ_c,ξ_k_c,α)
     randn!(rng,ξ_c)
-    ξ_k_c.=a.*fft(ξ_c,(2,3)) # a because of a^2 / a
+    ξ_k_c.=fft(ξ_c,(2,3)) # a because of a^2 / a / a
 
-    for ky in 1:N
+    @Threads.threads for ky in 1:N
         for kx in 1:N
-            ξ_k_c[:,kx,ky,:] .= (2π)*sqrt(α[kx,ky])*ξ_k_c[:,kx,ky,:]
+            tmp = @view ξ_k_c[:,kx,ky,:,:,:]
+            tmp .= 2π*sqrt(α[kx,ky])*tmp
         end
     end
     ξ_c .= real.(ifft(ξ_k_c,(2,3)))/a^2
 end
 
-ξ = zeros(ComplexF32,(2,N,N,Nc^2-1))
-ξ_k = zeros(ComplexF32,(2,N,N,Nc^2-1))
-ξ_k_c = zeros(ComplexF32,(2,N,N,Nc^2-1))
-ξ_c = zeros(Float32,(2,N,N,Nc^2-1))
+function testrc()
+    ξ = zeros(ComplexF32,(2,N,N,N,N,Nc^2-1))
+    ξ_k = zeros(ComplexF32,(2,N,N,N,N,Nc^2-1))
+    ξ_k_c = zeros(ComplexF32,(2,N,N,N,N,Nc^2-1))
+    ξ_c = zeros(Float32,(2,N,N,N,N,Nc^2-1))
 
-C=zeros(Float32,N÷2)
-Num=zeros(Float32,N÷2)
+    C=zeros(Float32,N÷2)
+    Num=zeros(Float32,N÷2)
 
-for i in 1:100
-    Generate_noise_in_k_space!(ξ,ξ_k,ξ_c,ξ_k_c,α)
-    for i in 1:N
-        for j in i:N
-            r = abs(mod(j-i,N÷2))+1
-            if (r<N÷2)
-                C[r] = C[r] + sum(ξ_c[:,i,:,:].*ξ_c[:,j,:,:])
-                Num[r] = Num[r]+N*2*(Nc^2-1)
+    for i in 1:10
+        show(i)
+        Generate_noise_in_k_space!(ξ,ξ_k,ξ_c,ξ_k_c,α)
+        for i in 1:N
+            for j in i:N
+                r = abs(mod(j-i,N÷2))+1
+                if (r<N÷2)
+                    C[r] = C[r] + sum(ξ_c[:,i,:,:,:,:].*ξ_c[:,j,:,:,:,:])
+                    Num[r] = Num[r]+N*2*(Nc^2-1)
+                end
             end
         end
     end
+    return (C./Num)
 end
 
-c = C./Num
+c = testrc()
 
 αX=ifft(α)/a2
 
-scatter((1:N÷2)*a,abs.(c)/l,label="Noise-noise correlator")
+scatter((0:N÷2-1)*a,abs.(c)/l/N^2,label="Noise-noise correlator")
 
-plot!((1:N÷2)*a,abs.(real.(αX[1:N÷2,1])),label="analytic")
+plot!((0:N÷2-1)*a,abs.(real.(αX[1:N÷2,1])),label="analytic")
 
-scatter!(xlim=(0,5),ylim=(0.001,10),yscale=:log,xlabel=L"r",ylabel=L"\alpha(r)")
+scatter!(xlim=(0,5.5),ylim=(0.0001,10),yscale=:log,xlabel=L"r",ylabel=L"\alpha(r)")
 
 
 display(ξ_k_c[1,1,:,1])
