@@ -15,7 +15,7 @@ using LaTeXStrings
 const mu² = Float32(1.0)
 
 const l = 32
-const N = 128*2
+const N = 256
 const a = Float32(l/N)
 const a2 = a^2
 const Ny = 50
@@ -162,6 +162,10 @@ end
 
 function k2(i,j)
     return((4.0 * sin(π*(i-1)/N)^2 + 4.0 * sin(π*(j-1)/N)^2)/a^2)
+end
+
+function k2_symm(i,j)
+    return((sin(2π*(i-1)/N)^2 +  sin(2π*(j-1)/N)^2)/a^2)
 end
 
 
@@ -374,3 +378,81 @@ plot!(Qs_data_cpp[:,1],Qs_data_cpp[:,2]/Qs_data_cpp[1,2],label="")
 plot!(yscale=:log)
 
 ##
+
+
+function alpha_f(kx,ky)
+    #k2_s = k2_symm(kx,ky)
+    k2_s = k2(kx,ky)
+
+    mu_over_LambdaQCD = 15.0/6.0
+    LambdaQCD = 6.0/l
+
+    beta = 9.0
+    c=0.2
+
+    return 4.0π/(beta*c*log(mu_over_LambdaQCD^(2.0/c)  + (k2_s/LambdaQCD^2)^(1.0/c) ))
+end
+
+function alphaArray()
+    kx = collect(1:N)
+    ky = copy(kx)
+    α = map(Base.splat(alpha_f), Iterators.product(kx, ky))
+end
+
+α=alphaArray()
+
+function Generate_noise_in_k_space!(ξ,ξ_k,ξ_c,ξ_k_c,α)
+    randn!(rng,ξ_c)
+    ξ_k_c.=a.*fft(ξ_c,(2,3)) # a because of a^2 / a
+
+    for ky in 1:N
+        for kx in 1:N
+            ξ_k_c[:,kx,ky,:] .= (2π)*sqrt(α[kx,ky])*ξ_k_c[:,kx,ky,:]
+        end
+    end
+    ξ_c .= real.(ifft(ξ_k_c,(2,3)))/a^2
+end
+
+ξ = zeros(ComplexF32,(2,N,N,Nc^2-1))
+ξ_k = zeros(ComplexF32,(2,N,N,Nc^2-1))
+ξ_k_c = zeros(ComplexF32,(2,N,N,Nc^2-1))
+ξ_c = zeros(Float32,(2,N,N,Nc^2-1))
+
+C=zeros(Float32,N÷2)
+Num=zeros(Float32,N÷2)
+
+for i in 1:100
+    Generate_noise_in_k_space!(ξ,ξ_k,ξ_c,ξ_k_c,α)
+    for i in 1:N
+        for j in i:N
+            r = abs(mod(j-i,N÷2))+1
+            if (r<N÷2)
+                C[r] = C[r] + sum(ξ_c[:,i,:,:].*ξ_c[:,j,:,:])
+                Num[r] = Num[r]+N*2*(Nc^2-1)
+            end
+        end
+    end
+end
+
+c = C./Num
+
+αX=ifft(α)/a2
+
+scatter((1:N÷2)*a,abs.(c)/l,label="Noise-noise correlator")
+
+plot!((1:N÷2)*a,abs.(real.(αX[1:N÷2,1])),label="analytic")
+
+scatter!(xlim=(0,5),ylim=(0.001,10),yscale=:log,xlabel=L"r",ylabel=L"\alpha(r)")
+
+
+display(ξ_k_c[1,1,:,1])
+
+heatmap(real.(ξ_c[1,:,:,1]),c = :jet)
+
+heatmap(imag.(ξ_k_c[1,:,:,1]),c = :jet)
+
+ξ_c[1,1,:,1]
+
+ξ_k_c[1,1,1,1]
+
+ξ_k_c[1,1,31,1]
