@@ -402,37 +402,59 @@ end
 
 α=alphaArray()
 
-function Generate_noise_in_k_space!(ξ,ξ_k,ξ_c,ξ_k_c,α)
-    randn!(rng,ξ_c)
-    ξ_k_c.=fft(ξ_c,(2,3)) # a because of a^2 / a / a
+function Generate_noise_in_k_space!(ξ,ξ_k,α)
+    for ic in 1:Nc
+        for jc in ic+1:Nc
+            ξ_icjc = @view ξ[:,:,:,:,:,ic,jc]
+            ξ_jcic = @view ξ[:,:,:,:,:,jc,ic]
+            randn!(rng,ξ_icjc)         # generate noise
+            ξ_icjc .= ξ_icjc/sqrt(2.0) # norm
+            ξ_jcic .= conj.(ξ_icjc)    # hermitian
+        end
+    end
+
+    ξ_1c1c = @view ξ[:,:,:,:,:,1,1]
+    randn!(rng,ξ_1c1c)
+    ξ_1c1c .= real.(ξ_1c1c)/sqrt(2.0)
+
+    ξ_3c3c = @view ξ[:,:,:,:,:,3,3]
+    randn!(rng,ξ_3c3c)
+    ξ_3c3c .= -sqrt(2.0/3.0)*real.(ξ_3c3c)
+
+    ξ_2c2c = @view ξ[:,:,:,:,:,2,2]
+    ξ_2c2c .= -(ξ_1c1c .+ ξ_3c3c/2.0)
+
+    ξ_1c1c .= (ξ_1c1c .- ξ_3c3c/2.0)
+
+    ξ_k.=fft(ξ,(2,3)) # a because of a^2 / a / a
 
     @Threads.threads for ky in 1:N
         for kx in 1:N
-            tmp = @view ξ_k_c[:,kx,ky,:,:,:]
+            tmp = @view ξ_k[:,kx,ky,:,:,:,:]
             tmp .= 2π*sqrt(α[kx,ky])*tmp
         end
     end
-    ξ_c .= real.(ifft(ξ_k_c,(2,3)))/a^2
+    ξ .= (ifft(ξ_k,(2,3)))/a^2
 end
 
 function testrc()
-    ξ = zeros(ComplexF32,(2,N,N,N,N,Nc^2-1))
-    ξ_k = zeros(ComplexF32,(2,N,N,N,N,Nc^2-1))
-    ξ_k_c = zeros(ComplexF32,(2,N,N,N,N,Nc^2-1))
-    ξ_c = zeros(Float32,(2,N,N,N,N,Nc^2-1))
+    ξ = zeros(ComplexF32,(2,N,N,N,N,Nc,Nc))
+    ξ_k = zeros(ComplexF32,(2,N,N,N,N,Nc,Nc))
+    #ξ_k_c = zeros(ComplexF32,(2,N,N,N,N,Nc^2-1))
+    #ξ_c = zeros(Float32,(2,N,N,N,N,Nc^2-1))
 
     C=zeros(Float32,N÷2)
     Num=zeros(Float32,N÷2)
 
     for i in 1:10
         show(i)
-        Generate_noise_in_k_space!(ξ,ξ_k,ξ_c,ξ_k_c,α)
+        Generate_noise_in_k_space!(ξ,ξ_k,α)
         for i in 1:N
             for j in i:N
                 r = abs(mod(j-i,N÷2))+1
                 if (r<N÷2)
-                    C[r] = C[r] + sum(ξ_c[:,i,:,:,:,:].*ξ_c[:,j,:,:,:,:])
-                    Num[r] = Num[r]+N*2*(Nc^2-1)
+                    C[r] = C[r] + real(sum(ξ[:,i,:,:,:,2,3].*ξ[:,j,:,:,:,3,2]))
+                    Num[r] = Num[r]+N*2
                 end
             end
         end
@@ -440,11 +462,16 @@ function testrc()
     return (C./Num)
 end
 
+
+ξ = zeros(ComplexF32,(2,N,N,N,N,Nc,Nc))
+ξ_k = zeros(ComplexF32,(2,N,N,N,N,Nc,Nc))
+
+Generate_noise_in_k_space!(ξ,ξ_k,α)
 c = testrc()
 
 αX=ifft(α)/a2
 
-scatter((0:N÷2-1)*a,abs.(c)/l/N^2,label="Noise-noise correlator")
+scatter((0:N÷2-1)*a,3*abs.(c)/l/N^2,label="Noise-noise correlator")
 
 plot!((0:N÷2-1)*a,abs.(real.(αX[1:N÷2,1])),label="analytic")
 
