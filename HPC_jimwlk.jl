@@ -29,22 +29,22 @@ rng = MersenneTwister(seed);
 t=gellmann(Nc,skip_identity=false)/2
 t[9]=t[9]*sqrt(2/3)
 
-function generate_rho_fft_to_momentum_space()
-    rho = variance_of_mv_noise * randn(rng, Float32,(N,N))
-    fft(rho)
+function generate_rho_fft_to_momentum_space(rho,fft_plan)
+    rho .= variance_of_mv_noise * randn(rng, Float32,(N,N))
+    rho .= fft_plan*rho
 end
 
-function compute_field!(rhok)
+function compute_field!(rhok,ifft_plan)
 # Modifies the argument to return the field
-    Threads.@threads for i in 1:N
-        for j in 1:N
+    Threads.@threads for j in 1:N
+        for i in 1:N
             @inbounds rhok[i,j] = a^2*rhok[i,j] / (a^2 * m² + 4.0 * sin(π*(i-1)/N)^2 + 4.0 * sin(π*(j-1)/N)^2)
             # factor of a^2 was removed to account for the normalization of ifft next
             # ifft computes sum / (lenfth of array) for each dimension
         end
     end
     rhok[1,1] = 0.0im
-    ifft!(rhok)
+    rhok .= ifft_plan*rhok
 end
 
 
@@ -58,21 +58,25 @@ function compute_local_fund_Wilson_line()
         end
     end
 
+    ρ_k = zeros(ComplexF32,(N,N))
+    fft_plan = plan_fft(ρ_k; flags=FFTW.MEASURE, timelimit=Inf)
+    ifft_plan = plan_ifft(ρ_k; flags=FFTW.MEASURE, timelimit=Inf)
+
     for b in 1:Nc^2-1
 
-        ρ_k = generate_rho_fft_to_momentum_space()
-        compute_field!(ρ_k)
+        generate_rho_fft_to_momentum_space(ρ_k, fft_plan)
+        compute_field!(ρ_k,ifft_plan)
         A = real.(ρ_k)
 
-        Threads.@threads for i in 1:N
-            for j in 1:N
+        Threads.@threads for j in 1:N
+            for i in 1:N
                 @inbounds A_arr[i,j] = A_arr[i,j] + A[i,j]*t[b]
             end
         end
     end
 
-    Threads.@threads for i in 1:N
-        for j in 1:N
+    Threads.@threads for j in 1:N
+        for i in 1:N
             @inbounds V_ij=@view V[i,j,:,:]
             @inbounds V_ij .= exp(1.0im.*A_arr[i,j])
         end
@@ -86,8 +90,8 @@ function compute_path_ordered_fund_Wilson_line()
     for i in 1:Ny-1
         display(i)
         tmp=compute_local_fund_Wilson_line()
-        Threads.@threads for i in 1:N
-            for j in 1:N
+        Threads.@threads for j in 1:N
+            for i in 1:N
                 @inbounds V_ij= @view V[i,j,:,:]
                 @inbounds tmp_ij= @view tmp[i,j,:,:]
                 @inbounds V_ij .= V_ij*tmp_ij
@@ -110,8 +114,8 @@ function compute_field_of_V_components(V)
     Vc=zeros(ComplexF32, (Nc^2,N,N))
 
     Threads.@threads for b in 1:Nc^2
-        for i in 1:N
-            for j in 1:N
+        for j in 1:N
+            for i in 1:N
                 @inbounds V_ij=@view V[i,j,:,:]
                 @inbounds Vc[b,i,j]=2.0*tr(V_ij*t[b])
             end
@@ -213,7 +217,7 @@ function generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
 end
 
 
-function generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k)
+function generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k,fft_plan)
     for ic in 1:Nc
         for jc in ic+1:Nc
             @inbounds ξ_icjc = @view ξ[:,:,:,ic,jc]
@@ -237,42 +241,44 @@ function generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k)
 
     ξ_1c1c .= (ξ_1c1c .- ξ_3c3c/2.0)
 
-    ξ_k .= fft(ξ,(2,3))
+    ξ_k .= fft_plan*ξ
     ξ_k .= ξ_k*a # a^2/a ; 1/a is from the noise noise correlator
 end
 
 
-function convolution!(K, ξ_k, ξ_out)
+function convolution!(K, ξ_k, ξ_out,ifft_plan)
     @inbounds sub_ξ_1 = @view ξ_k[1,:,:,:,:]
     @inbounds sub_K_1 = @view K[1,:,:]
     @inbounds sub_ξ_2 = @view ξ_k[2,:,:,:,:]
     @inbounds sub_K_2 = @view K[2,:,:]
     @fastmath @inbounds ξ_out .= (sub_ξ_1 .* sub_K_1 .+ sub_ξ_2 .* sub_K_2)/a2
-    ifft!(ξ_out,(1,2))
+    ξ_out .= ifft_plan*ξ_out
 end
 
 
-function rotated_noise(ξ,ξ_R_k,V)
-    Threads.@threads for i in 1:N
-        for j in 1:N
+function rotated_noise(ξ,ξ_R_k,V,fft_plan)
+    Threads.@threads for j in 1:N
+        for i in 1:N
             @inbounds V_ij = @view V[i,j,:,:]
             aV = adjoint(V_ij)
             for p in 1:2
-                @inbounds ξ_R = @view ξ_R_k[p,i,j,:,:]
-                @fastmath @inbounds ξ_R .= aV*ξ[p,i,j,:,:]*V_ij
+                #@inbounds ξ_R = @view ξ_R_k[p,i,j,:,:]
+                @inbounds ξ_pij = @view ξ[p,i,j,:,:]
+                #@fastmath @inbounds ξ_R .= aV*ξ[p,i,j,:,:]*V_ij
+                @fastmath @inbounds ξ_pij .= aV*ξ_pij*V_ij
             end
         end
     end
-    fft!(ξ_R_k,(2,3))
+    ξ_R_k .= fft_plan*ξ
     ξ_R_k .= ξ_R_k*a
 end
 
 
-function exp_Left(ξ_k, K, ξ_out, exp_out, ΔY)
-    convolution!(K, ξ_k, ξ_out)
+function exp_Left(ξ_k, K, ξ_out, exp_out, ΔY, ifft_plan)
+    convolution!(K, ξ_k, ξ_out,ifft_plan)
     pref=sqrt(alpha_fc*ΔY)/π
-    Threads.@threads for i in 1:N
-        for j in 1:N
+    Threads.@threads for j in 1:N
+        for i in 1:N
             @inbounds Exp = @view exp_out[i,j,:,:]
             @inbounds ξ_ij = @view ξ_out[i,j,:,:]
             @fastmath Exp .= exp(-pref*1.0im*ξ_ij)
@@ -280,11 +286,11 @@ function exp_Left(ξ_k, K, ξ_out, exp_out, ΔY)
     end
 end
 
-function exp_Right(ξ_k, K, ξ_out, exp_out, ΔY)
-    convolution!(K, ξ_k, ξ_out)
+function exp_Right(ξ_k, K, ξ_out, exp_out, ΔY, ifft_plan)
+    convolution!(K, ξ_k, ξ_out, ifft_plan)
     pref=sqrt(alpha_fc*ΔY)/π
-    Threads.@threads for i in 1:N
-        for j in 1:N
+    Threads.@threads for j in 1:N
+        for i in 1:N
             @inbounds Exp = @view exp_out[i,j,:,:]
             @inbounds ξ_ij = @view ξ_out[i,j,:,:]
             @fastmath Exp .= exp(pref*1.0im*ξ_ij)
@@ -321,12 +327,16 @@ function observables(io,Y,V)
 end
 
 function JIMWLK_evolution(V,Y_f,ΔY)
-    ξ_c = zeros(Float32, (2,N,N,Nc^2-1))
+    #ξ_c = zeros(Float32, (2,N,N,Nc^2-1))
     ξ=zeros(ComplexF32, (2,N,N,Nc,Nc))
     ξ_k=zeros(ComplexF32, (2,N,N,Nc,Nc))
     ξ_conv_with_K=zeros(ComplexF32, (N,N,Nc,Nc))
     exp_R=zeros(ComplexF32, (N,N,Nc,Nc))
     exp_L=zeros(ComplexF32, (N,N,Nc,Nc))
+
+    fft_plan = plan_fft(ξ,(2,3); flags=FFTW.MEASURE, timelimit=Inf)
+    ifft_plan = plan_ifft(ξ_conv_with_K,(1,2); flags=FFTW.MEASURE, timelimit=Inf)
+
 
 
     K_of_k=zeros(ComplexF32, (2,N,N))
@@ -341,14 +351,14 @@ function JIMWLK_evolution(V,Y_f,ΔY)
             observables(io, Y,V)
 
             #generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
-            generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k)
-            exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L, ΔY)
+            generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k,fft_plan)
+            exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L, ΔY,ifft_plan)
 
-            rotated_noise(ξ,ξ_k,V)
-            exp_Right(ξ_k, K_of_k, ξ_conv_with_K, exp_R, ΔY)
+            rotated_noise(ξ,ξ_k,V,fft_plan) # rewrites original \xi
+            exp_Right(ξ_k, K_of_k, ξ_conv_with_K, exp_R, ΔY,ifft_plan)
 
-            Threads.@threads for i in 1:N
-                for j in 1:N
+            Threads.@threads for j in 1:N
+                for i in 1:N
                     @inbounds V_ij = @view V[i,j,:,:]
                     @inbounds exp_L_ij=@view exp_L[i,j,:,:]
                     @inbounds exp_R_ij=@view exp_R[i,j,:,:]
