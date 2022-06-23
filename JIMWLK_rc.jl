@@ -15,7 +15,7 @@ using LaTeXStrings
 const mu² = Float32(1.0)
 
 const l = 32
-const N = 32
+const N = 64
 const a = Float32(l/N)
 const a2 = a^2
 const Ny = 50
@@ -447,13 +447,13 @@ function testrc()
     Num=zeros(Float32,N÷2)
 
     for i in 1:10
-        show(i)
+        display(i)
         Generate_noise_in_k_space!(ξ,ξ_k,α)
         for i in 1:N
             for j in i:N
                 r = abs(mod(j-i,N÷2))+1
                 if (r<N÷2)
-                    C[r] = C[r] + real(sum(ξ[:,i,:,:,:,2,3].*ξ[:,j,:,:,:,3,2]))
+                    C[r] = C[r] + real(sum(ξ[:,i,:,:,:,1,1].*ξ[:,j,:,:,:,1,1]))
                     Num[r] = Num[r]+N*2
                 end
             end
@@ -462,21 +462,15 @@ function testrc()
     return (C./Num)
 end
 
-
-ξ = zeros(ComplexF32,(2,N,N,N,N,Nc,Nc))
-ξ_k = zeros(ComplexF32,(2,N,N,N,N,Nc,Nc))
-
-Generate_noise_in_k_space!(ξ,ξ_k,α)
 c = testrc()
 
+
 αX=ifft(α)/a2
-
-scatter((0:N÷2-1)*a,3*abs.(c)/l/N^2,label="Noise-noise correlator")
-
-plot!((0:N÷2-1)*a,abs.(real.(αX[1:N÷2,1])),label="analytic")
-
-scatter!(xlim=(0,5.5),ylim=(0.0001,10),yscale=:log,xlabel=L"r",ylabel=L"\alpha(r)")
-
+##
+    scatter!((0:N÷2-1)*a,3*abs.(c)/l/N^2,label="Noise-noise correlator")
+    plot!((0:N÷2-1)*a,abs.(real.(αX[1:N÷2,1])),label="analytic")
+    scatter!(xlim=(0,5.5),ylim=(0.0001,10),yscale=:log,xlabel=L"r",ylabel=L"\alpha(r)")
+##
 
 display(ξ_k_c[1,1,:,1])
 
@@ -489,3 +483,32 @@ heatmap(imag.(ξ_k_c[1,:,:,1]),c = :jet)
 ξ_k_c[1,1,1,1]
 
 ξ_k_c[1,1,31,1]
+
+
+
+
+##
+
+
+ξ = zeros(ComplexF32,(N,N,N,N))
+fft!(ξ,(3,4))
+
+K_of_k = zeros(ComplexF32,(N,N))
+WW_kernel!(1,K_of_k)
+
+res = zeros(ComplexF32,(N,N))
+
+function convolution(ξ,K_of_k,res)
+    Threads.@threads for i in 1:N
+        for j in 1:N
+            ξ_ij = @view ξ[i,j,:,:]
+            ξ_ij .= ξ_ij.*K_of_k
+            ifft!(ξ_ij)
+            res[i,j] =  ξ_ij[i,j]
+        end
+    end
+end
+
+
+##
+@time convolution(ξ,K_of_k,res)

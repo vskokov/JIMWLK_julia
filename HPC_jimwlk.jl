@@ -213,6 +213,35 @@ function generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
 end
 
 
+function generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k)
+    for ic in 1:Nc
+        for jc in ic+1:Nc
+            @inbounds ξ_icjc = @view ξ[:,:,:,ic,jc]
+            @inbounds ξ_jcic = @view ξ[:,:,:,jc,ic]
+            randn!(rng,ξ_icjc)         # generate noise
+            ξ_icjc .= ξ_icjc/sqrt(2.0) # norm
+            ξ_jcic .= conj.(ξ_icjc)    # hermitian
+        end
+    end
+
+    ξ_1c1c = @view ξ[:,:,:,1,1]
+    randn!(rng,ξ_1c1c)
+    ξ_1c1c .= real.(ξ_1c1c)/sqrt(2.0)
+
+    ξ_3c3c = @view ξ[:,:,:,3,3]
+    randn!(rng,ξ_3c3c)
+    ξ_3c3c .= -sqrt(2.0/3.0)*real.(ξ_3c3c)
+
+    ξ_2c2c = @view ξ[:,:,:,2,2]
+    ξ_2c2c .= -(ξ_1c1c .+ ξ_3c3c/2.0)
+
+    ξ_1c1c .= (ξ_1c1c .- ξ_3c3c/2.0)
+
+    ξ_k .= fft(ξ,(2,3))
+    ξ_k .= ξ_k*a # a^2/a ; 1/a is from the noise noise correlator
+end
+
+
 function convolution!(K, ξ_k, ξ_out)
     @inbounds sub_ξ_1 = @view ξ_k[1,:,:,:,:]
     @inbounds sub_K_1 = @view K[1,:,:]
@@ -311,7 +340,8 @@ function JIMWLK_evolution(V,Y_f,ΔY)
         while Y<Y_f
             observables(io, Y,V)
 
-            generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
+            #generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
+            generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k)
             exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L, ΔY)
 
             rotated_noise(ξ,ξ_k,V)
@@ -338,4 +368,4 @@ V=compute_path_ordered_fund_Wilson_line()
 
 Vc=compute_field_of_V_components(V)
 
-JIMWLK_evolution(V,1.0,0.001)
+@time JIMWLK_evolution(V,1.0,0.01)
