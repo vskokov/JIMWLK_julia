@@ -167,6 +167,12 @@ function k2(i,j)
     return((4.0 * sin(π*(i-1)/N)^2 + 4.0 * sin(π*(j-1)/N)^2)/a^2)
 end
 
+function k2_symm(i,j)
+    return((sin(2π*(i-1)/N)^2 +  sin(2π*(j-1)/N)^2)/a^2)
+end
+
+
+
 
 function bin_x(S)
     Nbins=N÷2
@@ -204,8 +210,8 @@ function WW_kernel!(i,K_of_k)
 end
 
 function alpha_f(kx,ky)
-    #k2_s = k2_symm(kx,ky)
-    k2_s = k2(kx,ky)
+    k2_s = k2_symm(kx,ky)
+    #k2_s = k2(kx,ky)
 
     mu_over_LambdaQCD = 15.0/6.0
     LambdaQCD = 6.0/l
@@ -219,7 +225,12 @@ end
 function alphaArray()
     kx = collect(1:N)
     ky = copy(kx)
-    α = map(Base.splat(alpha_f), Iterators.product(kx, ky))
+    α_k = map(Base.splat(alpha_f), Iterators.product(kx, ky))
+
+	# to make this symmetric and all real 
+	#α = real.(ifft(α_k))
+	#return( real.(fft(α)) )
+	return( α_k )
 end
 
 # It is more convenient to have \xi (z,x) where x is the last spatial variable
@@ -256,12 +267,15 @@ function generate_noise_Fourier_Space_mem_ef!(ξ, ξ_k,  α, fft_plan, ifft_plan
     @Threads.threads for ky in 1:N
         for kx in 1:N
 			# working with x_1 and x_2 
-            tmp = @view ξ_k[:,:,:,kx,ky,:,:]
-            tmp .= 2π*sqrt(α[kx,ky])*tmp
+            ξ_k_kx_ky = @view ξ_k[:,:,:,kx,ky,:,:]
+            ξ_k_kx_ky .= 2π*sqrt(α[kx,ky])*ξ_k_kx_ky
         end
     end
 	ξ .= (ifft_plan*ξ_k)/a^2
-
+	#ξ_k .= (fft_plan*ξ)*a^2
+	#
+	\xi_k IS NOT FFTed in z!!!!
+	
 end
 
 function convolution!(K, ξ_k, ξ_out, tmp, ifft_plan)
@@ -269,8 +283,9 @@ function convolution!(K, ξ_k, ξ_out, tmp, ifft_plan)
     @inbounds sub_K_1 = @view K[1,:,:]
     @inbounds sub_ξ_2 = @view ξ_k[2,:,:,:,:,:,:]
     @inbounds sub_K_2 = @view K[2,:,:]
-    @fastmath @inbounds tmp .= (sub_ξ_1 .* sub_K_1 .+ sub_ξ_2 .* sub_K_2)/a2
-	tmp .= ifft_plan*tmp 
+	# broadcasting over z  
+    @fastmath tmp .= sub_ξ_1 .* sub_K_1 .+ sub_ξ_2 .* sub_K_2
+	tmp .= (ifft_plan*tmp)/a2 
 	for j in 1:N # cycle over x-s
         for i in 1:N
 			ξ_out_ij = @view ξ_out[i,j,:,:] 
@@ -296,7 +311,7 @@ function rotated_noise(ξ,ξ_R_k,V,fft_plan)
         end
     end
 	# fft in z -> k_z; plan in 2 and 3 coordinate
-	ξ_R_k .= a2*(fft_plan*ξ)
+	ξ_R_k .= a2.*(fft_plan*ξ)
 end
 
 function exp_Left(ξ_k, K, ξ_out, exp_out, tmp,  ΔY, ifft_plan, prefactor)
@@ -305,9 +320,13 @@ function exp_Left(ξ_k, K, ξ_out, exp_out, tmp,  ΔY, ifft_plan, prefactor)
         for i in 1:N
             @inbounds Exp = @view exp_out[i,j,:,:]
             @inbounds ξ_ij = @view ξ_out[i,j,:,:]
-            @fastmath Exp .= exp(-prefactor*1.0im*ξ_ij)
+            @fastmath Exp .= exp(prefactor*1.0im*ξ_ij)
         end
     end
+	println("xi_k")
+	println( ξ_k[1,1,1,1,1,:,:] - adjoint( ξ_k[1,1,1,1,1,:,:] ))
+	println("xi_out")
+	println( ξ_out[1,1,:,:] - adjoint( ξ_out[1,1,:,:] ))
 end
 
 function Qs_of_S(r,S)
@@ -332,7 +351,12 @@ function observables(io,Y,V)
     (r,Sb)=bin_x(S)
 
     Qs=Qs_of_S(r,Sb)
-    display((Y, Qs))
+
+    println((Y, Qs))
+    
+	println("\n")
+	
+	println(S[1,1])
 
     Printf.@printf(io, "%f %f \n", Y, Qs)
 
@@ -351,6 +375,7 @@ function JIMWLK_evolution(V,Y_f,ΔY)
 
     fft_plan = plan_fft(ξ,(4,5); flags=FFTW.MEASURE, timelimit=Inf)
     rotated_fft_plan = plan_fft(ξ,(2,3); flags=FFTW.MEASURE, timelimit=Inf)
+
     inv_fft_plan = plan_ifft(ξ_k,(4,5); flags=FFTW.MEASURE, timelimit=Inf)
     ifft_plan = plan_ifft(tmp,(1,2); flags=FFTW.MEASURE, timelimit=Inf)
 
@@ -368,12 +393,23 @@ function JIMWLK_evolution(V,Y_f,ΔY)
             observables(io, Y,V)
 
             #generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
+			println("Noise")
             generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k,  α, fft_plan, inv_fft_plan)
-            exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L, tmp, ΔY, ifft_plan, sqrt_alpha_dY_over_pi)
+            
+			println("xi_k noise gen")
+			println(ξ_k[1,1,1,1,1,:,:] - adjoint(ξ_k[1,1,1,1,1,:,:]))
+			println("xi noise gen")
+			println(ξ[1,1,1,1,1,:,:] - adjoint(ξ[1,1,1,1,1,:,:]))
+			
+			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L, tmp, ΔY, ifft_plan, -sqrt_alpha_dY_over_pi)
 
+			println("Rotated_Noise")
             rotated_noise(ξ,ξ_k,V,rotated_fft_plan) # rewrites original \xi
             # - sign to make it right
-			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_R, tmp, ΔY, ifft_plan, -sqrt_alpha_dY_over_pi)
+			println("xi_k Rot noise gen")
+			println(ξ_k[1,1,1,1,1,:,:] - adjoint(ξ_k[1,1,1,1,1,:,:]))
+			#
+			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_R, tmp, ΔY, ifft_plan, sqrt_alpha_dY_over_pi)
 
             Threads.@threads for j in 1:N
                 for i in 1:N
