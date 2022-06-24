@@ -10,7 +10,7 @@ using Printf
 const mu² = 1.0
 
 const l = 32
-const N = 64
+const N = 32
 const a = l/N
 const a2=a^2
 const Ny = 50
@@ -226,7 +226,7 @@ function alpha_f(kx,ky)
     beta = 9.0
     c=0.2
 
-    return 4.0π/l^2/(beta*c*log(mu_over_LambdaQCD^(2.0/c)  + (k2_s/LambdaQCD^2)^(1.0/c) ))
+    return 4.0π/N^2/(beta*c*log(mu_over_LambdaQCD^(2.0/c)  + (k2_s/LambdaQCD^2)^(1.0/c) ))
 end
 
 function alphaArray()
@@ -388,10 +388,13 @@ function JIMWLK_evolution(V,Y_f,ΔY)
 
     ξ=zeros(ComplexF32, (2,N,N,N,N,Nc,Nc))
     ξ_k=zeros(ComplexF32, (2,N,N,N,N,Nc,Nc))
-	tmp = zeros(ComplexF32, (N,N,N,N,Nc,Nc))
+	tmp = @view ξ_k[1,:,:,:,:,:,:]
+	#tmp = zeros(ComplexF32, (N,N,N,N,Nc,Nc))
     ξ_conv_with_K=zeros(ComplexF32, (N,N,Nc,Nc))
     exp_R=zeros(ComplexF32, (N,N,Nc,Nc))
     exp_L=zeros(ComplexF32, (N,N,Nc,Nc))
+
+
 
     fft_plan_45 = plan_fft(ξ,(4,5); flags=FFTW.MEASURE, timelimit=Inf)
     fft_plan_23 = plan_fft(ξ,(2,3); flags=FFTW.MEASURE, timelimit=Inf)
@@ -416,10 +419,13 @@ function JIMWLK_evolution(V,Y_f,ΔY)
             generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k,  α, fft_plan_45, inv_fft_plan_45, fft_plan_23)
 
 			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L, tmp, ΔY, ifft_plan_12, -sqrt_alpha_dY_over_pi)
+			#rewrites \xi_k
 
-            rotated_noise(ξ,ξ_k,V,fft_plan_23) # rewrites original \xi
+            rotated_noise(ξ,ξ_k,V,fft_plan_23) # rewrites original \xi, rewrites \xi_k
             # - sign to make it right
 			#
+
+			#rewrites \xi_k
 			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_R, tmp, ΔY, ifft_plan_12, sqrt_alpha_dY_over_pi)
 
             Threads.@threads for j in 1:N
