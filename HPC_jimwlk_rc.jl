@@ -10,7 +10,7 @@ using Printf
 const mu² = 1.0
 
 const l = 32
-const N = 32
+const N = 64
 const a = l/N
 const a2=a^2
 const Ny = 50
@@ -42,14 +42,14 @@ function inv_propagator(D)
     x = collect(0:N-1)
     y = copy(x)
     D .= map(Base.splat(inv_propagator_kernel), Iterators.product(x, y))
-end 
+end
 
 function compute_field!(rhok, D, ifft_plan)
 	# Modifies the argument to return the field
     rhok .= rhok .* D
     # factor of a^2 was removed to account for the normalization of ifft next
     # ifft computes sum / (lenfth of array) for each dimension
-    rhok[1,1] = 0.0im # remove zero mode 	
+    rhok[1,1] = 0.0im # remove zero mode
     rhok .= ifft_plan*rhok
 end
 
@@ -88,10 +88,17 @@ function compute_local_fund_Wilson_line()
 end
 
 
+#exp(-r^2 Q_s^2 /4 ) = exp(-1/2)
+#r^2 Q_s^2 /4 = 1/2
+#r Q_s = sqrt(2)
+#Q_s = sqrt(2) /r
+
+
+
 function compute_path_ordered_fund_Wilson_line()
     V = compute_local_fund_Wilson_line()
     for i in 1:Ny-1
-		print(i) 
+		println(i)
         tmp=compute_local_fund_Wilson_line()
         Threads.@threads for j in 1:N
             for i in 1:N
@@ -219,7 +226,7 @@ function alpha_f(kx,ky)
     beta = 9.0
     c=0.2
 
-    return 4.0π/(beta*c*log(mu_over_LambdaQCD^(2.0/c)  + (k2_s/LambdaQCD^2)^(1.0/c) ))
+    return 4.0π/l^2/(beta*c*log(mu_over_LambdaQCD^(2.0/c)  + (k2_s/LambdaQCD^2)^(1.0/c) ))
 end
 
 function alphaArray()
@@ -227,16 +234,40 @@ function alphaArray()
     ky = copy(kx)
     α_k = map(Base.splat(alpha_f), Iterators.product(kx, ky))
 
-	# to make this symmetric and all real 
-	#α = real.(ifft(α_k))
-	#return( real.(fft(α)) )
 	return( α_k )
 end
+
+
+
+
+function alpha_f_x(x,y)
+	@fastmath r2 = (sin(x*π/N)^2 + sin(y*π/N)^2)*(l/(π))^2
+    #k2_s = k2(kx,ky)
+
+    mu_over_LambdaQCD = 15.0/6.0
+    LambdaQCD = 6.0/l
+
+    beta = 9.0
+    c=0.2
+
+    return 4.0π/(beta*c*log(mu_over_LambdaQCD^(2.0/c)  + (1.26/(r2*LambdaQCD^2))^(1.0/c) ))
+end
+
+function alphaArray_x()
+    x = collect(0:N-1)
+    y = copy(x)
+    α = map(Base.splat(alpha_f), Iterators.product(x, y))
+
+	αk = a2*fft(α)
+
+	return( αk )
+end
+
 
 # It is more convenient to have \xi (z,x) where x is the last spatial variable
 # ξ[polarization, z_1 ,z_2, x_1, x_2, color_a, color_b]
 
-function generate_noise_Fourier_Space_mem_ef!(ξ, ξ_k,  α, fft_plan, ifft_plan)
+function generate_noise_Fourier_Space_mem_ef!(ξ, ξ_k,  α, fft_plan, ifft_plan, fft_plan_z)
     for ic in 1:Nc
         for jc in ic+1:Nc
             @inbounds ξ_icjc = @view ξ[:,:,:,:,:,ic,jc]
@@ -263,19 +294,16 @@ function generate_noise_Fourier_Space_mem_ef!(ξ, ξ_k,  α, fft_plan, ifft_plan
     ξ_k .= fft_plan*ξ
     #ξ_k .= ξ_k  # a^2/a ; 1/a *a is from the noise noise correlator
 
-
     @Threads.threads for ky in 1:N
         for kx in 1:N
-			# working with x_1 and x_2 
+			# working with x_1 and x_2
             ξ_k_kx_ky = @view ξ_k[:,:,:,kx,ky,:,:]
             ξ_k_kx_ky .= 2π*sqrt(α[kx,ky])*ξ_k_kx_ky
         end
     end
-	ξ .= (ifft_plan*ξ_k)/a^2
-	#ξ_k .= (fft_plan*ξ)*a^2
+	ξ .= (ifft_plan*ξ_k)/a2
+	ξ_k .= (fft_plan_z*ξ)*a2
 	#
-	\xi_k IS NOT FFTed in z!!!!
-	
 end
 
 function convolution!(K, ξ_k, ξ_out, tmp, ifft_plan)
@@ -283,12 +311,12 @@ function convolution!(K, ξ_k, ξ_out, tmp, ifft_plan)
     @inbounds sub_K_1 = @view K[1,:,:]
     @inbounds sub_ξ_2 = @view ξ_k[2,:,:,:,:,:,:]
     @inbounds sub_K_2 = @view K[2,:,:]
-	# broadcasting over z  
+	# broadcasting over z
     @fastmath tmp .= sub_ξ_1 .* sub_K_1 .+ sub_ξ_2 .* sub_K_2
-	tmp .= (ifft_plan*tmp)/a2 
+	tmp .= (ifft_plan*tmp)/a2
 	for j in 1:N # cycle over x-s
         for i in 1:N
-			ξ_out_ij = @view ξ_out[i,j,:,:] 
+			ξ_out_ij = @view ξ_out[i,j,:,:]
 			tmp_ijij = @view tmp[i,j,i,j,:,:]
 			ξ_out_ij .= tmp_ijij
         end
@@ -300,13 +328,13 @@ function rotated_noise(ξ,ξ_R_k,V,fft_plan)
         for i in 1:N
            	@inbounds V_ij = @view V[i,j,:,:]
             aV = adjoint(V_ij)
-			for ip = 1:N 
+			for ip = 1:N
 				for jp in 1:N
             		for p in 1:2
                 		@inbounds ξ_pij = @view ξ[p,i,j,ip,jp,:,:]
                 		@fastmath @inbounds ξ_pij .= aV*ξ_pij*V_ij
-					end 
-				end 
+					end
+				end
             end
         end
     end
@@ -323,10 +351,6 @@ function exp_Left(ξ_k, K, ξ_out, exp_out, tmp,  ΔY, ifft_plan, prefactor)
             @fastmath Exp .= exp(prefactor*1.0im*ξ_ij)
         end
     end
-	println("xi_k")
-	println( ξ_k[1,1,1,1,1,:,:] - adjoint( ξ_k[1,1,1,1,1,:,:] ))
-	println("xi_out")
-	println( ξ_out[1,1,:,:] - adjoint( ξ_out[1,1,:,:] ))
 end
 
 function Qs_of_S(r,S)
@@ -352,11 +376,7 @@ function observables(io,Y,V)
 
     Qs=Qs_of_S(r,Sb)
 
-    println((Y, Qs))
-    
-	println("\n")
-	
-	println(S[1,1])
+    println(Y, " ",  Qs, " ", S[1,1])
 
     Printf.@printf(io, "%f %f \n", Y, Qs)
 
@@ -365,7 +385,7 @@ end
 function JIMWLK_evolution(V,Y_f,ΔY)
 
 	sqrt_alpha_dY_over_pi=sqrt(alpha_fc*ΔY)/π
- 
+
     ξ=zeros(ComplexF32, (2,N,N,N,N,Nc,Nc))
     ξ_k=zeros(ComplexF32, (2,N,N,N,N,Nc,Nc))
 	tmp = zeros(ComplexF32, (N,N,N,N,Nc,Nc))
@@ -373,11 +393,11 @@ function JIMWLK_evolution(V,Y_f,ΔY)
     exp_R=zeros(ComplexF32, (N,N,Nc,Nc))
     exp_L=zeros(ComplexF32, (N,N,Nc,Nc))
 
-    fft_plan = plan_fft(ξ,(4,5); flags=FFTW.MEASURE, timelimit=Inf)
-    rotated_fft_plan = plan_fft(ξ,(2,3); flags=FFTW.MEASURE, timelimit=Inf)
+    fft_plan_45 = plan_fft(ξ,(4,5); flags=FFTW.MEASURE, timelimit=Inf)
+    fft_plan_23 = plan_fft(ξ,(2,3); flags=FFTW.MEASURE, timelimit=Inf)
 
-    inv_fft_plan = plan_ifft(ξ_k,(4,5); flags=FFTW.MEASURE, timelimit=Inf)
-    ifft_plan = plan_ifft(tmp,(1,2); flags=FFTW.MEASURE, timelimit=Inf)
+    inv_fft_plan_45 = plan_ifft(ξ_k,(4,5); flags=FFTW.MEASURE, timelimit=Inf)
+    ifft_plan_12 = plan_ifft(tmp,(1,2); flags=FFTW.MEASURE, timelimit=Inf)
 
     K_of_k=zeros(ComplexF32, (2,N,N))
     K_of_k_1 = @view K_of_k[1,:,:]
@@ -393,23 +413,14 @@ function JIMWLK_evolution(V,Y_f,ΔY)
             observables(io, Y,V)
 
             #generate_noise_Fourier_Space!(ξ,ξ_k,ξ_c)
-			println("Noise")
-            generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k,  α, fft_plan, inv_fft_plan)
-            
-			println("xi_k noise gen")
-			println(ξ_k[1,1,1,1,1,:,:] - adjoint(ξ_k[1,1,1,1,1,:,:]))
-			println("xi noise gen")
-			println(ξ[1,1,1,1,1,:,:] - adjoint(ξ[1,1,1,1,1,:,:]))
-			
-			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L, tmp, ΔY, ifft_plan, -sqrt_alpha_dY_over_pi)
+            generate_noise_Fourier_Space_mem_ef!(ξ,ξ_k,  α, fft_plan_45, inv_fft_plan_45, fft_plan_23)
 
-			println("Rotated_Noise")
-            rotated_noise(ξ,ξ_k,V,rotated_fft_plan) # rewrites original \xi
+			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_L, tmp, ΔY, ifft_plan_12, -sqrt_alpha_dY_over_pi)
+
+            rotated_noise(ξ,ξ_k,V,fft_plan_23) # rewrites original \xi
             # - sign to make it right
-			println("xi_k Rot noise gen")
-			println(ξ_k[1,1,1,1,1,:,:] - adjoint(ξ_k[1,1,1,1,1,:,:]))
 			#
-			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_R, tmp, ΔY, ifft_plan, sqrt_alpha_dY_over_pi)
+			exp_Left(ξ_k, K_of_k, ξ_conv_with_K, exp_R, tmp, ΔY, ifft_plan_12, sqrt_alpha_dY_over_pi)
 
             Threads.@threads for j in 1:N
                 for i in 1:N
@@ -431,4 +442,4 @@ end
 @time V=compute_path_ordered_fund_Wilson_line()
 
 
-@time JIMWLK_evolution(V,1.0,0.001)
+@time JIMWLK_evolution(V,20.0,0.05)
