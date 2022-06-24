@@ -34,51 +34,54 @@ function generate_rho_fft_to_momentum_space(rho,fft_plan)
     rho .= fft_plan*rho
 end
 
-function compute_field!(rhok,ifft_plan)
-# Modifies the argument to return the field
-    Threads.@threads for j in 1:N
-        for i in 1:N
-            @inbounds rhok[i,j] = a^2*rhok[i,j] / (a^2 * m² + 4.0 * sin(π*(i-1)/N)^2 + 4.0 * sin(π*(j-1)/N)^2)
-            # factor of a^2 was removed to account for the normalization of ifft next
-            # ifft computes sum / (lenfth of array) for each dimension
-        end
-    end
-    rhok[1,1] = 0.0im
+function inv_propagator_kernel(i,j)
+	return (a2 / (a2 * m² + 4.0 * sin(π*i/N)^2 + 4.0 * sin(π*j/N)^2))
+end
+
+function inv_propagator(D)
+    x = collect(0:N-1)
+    y = copy(x)
+    D .= map(Base.splat(inv_propagator_kernel), Iterators.product(y, x))
+end 
+
+function compute_field!(rhok, D, ifft_plan)
+	# Modifies the argument to return the field
+    rhok .= rhok .* D
+    # factor of a^2 was removed to account for the normalization of ifft next
+    # ifft computes sum / (lenfth of array) for each dimension
+    rhok[1,1] = 0.0im # remove zero mode 	
     rhok .= ifft_plan*rhok
 end
 
-
 function compute_local_fund_Wilson_line()
-    A_arr = Array{Matrix{ComplexF32}}(undef, (N,N))
+    A_arr = zeros(ComplexF32, (N,N, Nc, Nc))
     V = zeros(ComplexF32, (N,N,Nc,Nc))
-
-    Threads.@threads for i in 1:N
-        for j in 1:N
-            @inbounds A_arr[i,j] = zeros(ComplexF32,(Nc,Nc))
-        end
-    end
 
     ρ_k = zeros(ComplexF32,(N,N))
     fft_plan = plan_fft(ρ_k; flags=FFTW.MEASURE, timelimit=Inf)
     ifft_plan = plan_ifft(ρ_k; flags=FFTW.MEASURE, timelimit=Inf)
+	D = zeros(Float32,(N,N))
+	inv_propagator(D)
 
     for b in 1:Nc^2-1
 
         generate_rho_fft_to_momentum_space(ρ_k, fft_plan)
-        compute_field!(ρ_k,ifft_plan)
+        compute_field!(ρ_k, D, ifft_plan)
         A = real.(ρ_k)
 
         Threads.@threads for j in 1:N
             for i in 1:N
-                @inbounds A_arr[i,j] = A_arr[i,j] + A[i,j]*t[b]
+				@inbounds A_arr_ij = @view A_arr[i,j,:,:]
+                @inbounds A_arr_ij .= A_arr_ij + A[i,j]*t[b]
             end
         end
     end
 
     Threads.@threads for j in 1:N
         for i in 1:N
-            @inbounds V_ij=@view V[i,j,:,:]
-            @inbounds V_ij .= exp(1.0im.*A_arr[i,j])
+            @inbounds V_ij = @view V[i,j,:,:]
+			@inbounds A_arr_ij = @view A_arr[i,j,:,:]
+            @inbounds V_ij .= exp(1.0im.*A_arr_ij)
         end
     end
     return V
@@ -88,7 +91,7 @@ end
 function compute_path_ordered_fund_Wilson_line()
     V = compute_local_fund_Wilson_line()
     for i in 1:Ny-1
-        display(i)
+		print(i) 
         tmp=compute_local_fund_Wilson_line()
         Threads.@threads for j in 1:N
             for i in 1:N
